@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Greenhouse SCADA — Мониторинг IoT-теплицы</title>
+  <meta name="description" content="SCADA-панель управления и мониторинга IoT-теплицы на ESP32: телеметрия датчиков в реальном времени, графики, база растений и ИИ-диагностика." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js" defer></script>
+  <script src="js/config.js" defer></script>
+  <script src="js/state.js" defer></script>
+  <script src="js/svg-plants.js" defer></script>
+  <script src="js/simulator.js" defer></script>
+  <script src="js/mqtt-client.js" defer></script>
+  <script src="js/charts.js" defer></script>
+  <script src="js/ai-vision.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top SCADA Header -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22V12" stroke-linecap="round"/>
+            <path d="M12 13C7 13 4 9.5 4 4.5C8.5 4.5 12 7.5 12 13Z"/>
+            <path d="M12 10C12 6 15 3.5 20 3.5C20 8.5 16.5 11.5 12 10Z"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">GREENHOUSE <span class="brand-accent">// SCADA</span></div>
+          <div class="brand-sub">ESP32-WROOM-32 · 5 датчиков · 5 MOSFET</div>
+        </div>
+      </div>
+
+      <nav class="main-nav" aria-label="Разделы SCADA">
+        <button type="button" class="nav-tab is-active" data-tab="overview" id="btn-tab-overview">
+          <span class="nav-dot"></span>
+          Обзор теплицы
+        </button>
+        <button type="button" class="nav-tab" data-tab="charts" id="btn-tab-charts">
+          <span class="nav-dot"></span>
+          Графики телеметрии
+        </button>
+        <button type="button" class="nav-tab" data-tab="ai" id="btn-tab-ai">
+          <span class="nav-dot"></span>
+          ИИ-диагностика
+        </button>
+      </nav>
+
+      <div class="topbar-actions">
+        <button type="button" class="conn-pill" id="connection-pill" title="Настроить подключение ESP32 / MQTT">
+          <span class="conn-dot" id="connection-dot"></span>
+          <span id="connection-label">Симулятор</span>
+        </button>
+        <button type="button" class="icon-btn" id="btn-theme-toggle" title="Переключить тему (Тёмная / Светлая)" aria-label="Переключить тему">
+          <span id="theme-icon">☀</span>
+        </button>
+        <button type="button" class="icon-btn" id="btn-open-settings" title="Настройки подключения и ИИ" aria-label="Настройки">
+          ⚙
+        </button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- TAB 1: OVERVIEW -->
+      <section class="tab-panel is-active" id="tab-overview">
+        <div class="overview-split">
+          <!-- LEFT: PLANT DATABASE (UP TO 5) -->
+          <section class="panel plants-panel">
+            <div class="panel-header">
+              <div>
+                <h1 class="panel-title">Растения в теплице</h1>
+                <p class="panel-subtitle">Визуализация состояния по последним ИИ-проверкам фото</p>
+              </div>
+              <div class="panel-header-actions">
+                <span class="slot-counter" id="plant-count-badge">0 / 5</span>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-add-plant">+ Добавить растение</button>
+              </div>
+            </div>
+            <div class="plants-grid" id="plants-grid"></div>
+          </section>
+
+          <!-- RIGHT: CURRENT GREENHOUSE TELEMETRY + OLED MIRROR -->
+          <section class="panel telemetry-panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Текущие параметры теплицы</h2>
+                <p class="panel-subtitle">Показания датчиков в реальном времени</p>
+              </div>
+              <div class="telemetry-meta">
+                <span class="mono-tag" id="telemetry-last-update">--:--:--</span>
+              </div>
+            </div>
+
+            <div class="sensors-grid" id="sensors-grid"></div>
+
+            <!-- Physical OLED 0.96" Mirror -->
+            <div class="oled-widget" id="oled-mirror">
+              <div class="oled-bezel">
+                <div class="oled-header-bar">
+                  <span>OLED 128×64 · GPIO 22 / RX</span>
+                  <span id="oled-mode">AUTO</span>
+                </div>
+                <div class="oled-screen">
+                  <div class="oled-row">
+                    <span>TEMP: <strong id="oled-temp">--.-C</strong></span>
+                    <span>HUM: <strong id="oled-hum">--%</strong></span>
+                  </div>
+                  <div class="oled-row">
+                    <span>SOIL: <strong id="oled-soil">--%</strong></span>
+                    <span>TANK: <strong id="oled-water">--%</strong></span>
+                  </div>
+                  <div class="oled-row">
+                    <span>LIGHT: <strong id="oled-light">--%</strong></span>
+                    <span id="oled-acts">P:- H:- M:- L:- F:-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- CONTROL DECK (AUTO / MANUAL + 5 ACTUATORS) -->
+        <section class="panel control-panel">
+          <div class="control-header">
+            <div class="control-title-group">
+              <h2 class="panel-title">Управление исполнительными модулями</h2>
+              <p class="panel-subtitle">5 MOSFET-каналов ESP32 · Автоматический и ручной режимы</p>
+            </div>
+
+            <div class="control-toolbar">
+              <div class="mode-switch" role="group" aria-label="Режим управления">
+                <button type="button" class="mode-btn is-active" id="btn-mode-auto">АВТОМАТИЧЕСКИЙ</button>
+                <button type="button" class="mode-btn" id="btn-mode-manual">РУЧНОЙ</button>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-toggle-thresholds">
+                Уставки автоматики ▾
+              </button>
+              <button type="button" class="btn btn-danger btn-sm" id="btn-emergency-stop" disabled title="Доступно в ручном режиме">
+                Аварийный стоп (выкл. всё)
+              </button>
+            </div>
+          </div>
+
+          <div class="interlock-banner" id="water-interlock-banner" hidden>
+            <strong>Защита от сухого хода:</strong> уровень воды в баке ниже безопасного порога. Полив и увлажнитель принудительно заблокированы.
+          </div>
+
+          <!-- Collapsible Auto Thresholds -->
+          <div class="thresholds-panel" id="thresholds-panel" hidden>
+            <div class="thresholds-grid">
+              <label class="field">
+                <span>Мин. темп. (°C)</span>
+                <input type="number" step="0.5" min="5" max="40" id="th-tempMin" />
+              </label>
+              <label class="field">
+                <span>Макс. темп. (°C)</span>
+                <input type="number" step="0.5" min="10" max="45" id="th-tempMax" />
+              </label>
+              <label class="field">
+                <span>Мин. влажн. возд. (%)</span>
+                <input type="number" step="1" min="10" max="90" id="th-humMin" />
+              </label>
+              <label class="field">
+                <span>Макс. влажн. возд. (%)</span>
+                <input type="number" step="1" min="20" max="98" id="th-humMax" />
+              </label>
+              <label class="field">
+                <span>Вкл. полив почва &lt; (%)</span>
+                <input type="number" step="1" min="5" max="80" id="th-soilMin" />
+              </label>
+              <label class="field">
+                <span>Стоп полив почва ≥ (%)</span>
+                <input type="number" step="1" min="15" max="95" id="th-soilMax" />
+              </label>
+              <label class="field">
+                <span>Мин. освещённость (%)</span>
+                <input type="number" step="1" min="5" max="95" id="th-lightMin" />
+              </label>
+              <label class="field">
+                <span>Авар. порог воды (%)</span>
+                <input type="number" step="1" min="5" max="50" id="th-waterMinSafe" />
+              </label>
+            </div>
+            <div class="thresholds-actions">
+              <button type="button" class="btn btn-primary btn-sm" id="btn-save-thresholds">Применить уставки</button>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-reset-thresholds">Сбросить по умолчанию</button>
+            </div>
+          </div>
+
+          <div class="actuators-grid" id="actuators-grid"></div>
+        </section>
+
+        <!-- SCADA EVENT LOG -->
+        <section class="panel log-panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Журнал событий SCADA</h2>
+              <p class="panel-subtitle">Переключения режимов, автоматические срабатывания и предупреждения</p>
+            </div>
+            <button type="button" class="btn btn-outline btn-sm" id="btn-clear-logs">Очистить журнал</button>
+          </div>
+          <div class="event-log-list" id="event-log-list"></div>
+        </section>
+      </section>
+
+      <!-- TAB 2: CHARTS -->
+      <section class="tab-panel" id="tab-charts">
+        <div class="panel charts-toolbar-panel">
+          <div class="panel-header">
+            <div>
+              <h1 class="panel-title">Графики телеметрии во времени</h1>
+              <p class="panel-subtitle">Динамика всех 5 параметров датчиков теплицы</p>
+            </div>
+            <div class="charts-controls">
+              <div class="segmented" role="group" aria-label="Интервал графиков">
+                <button type="button" class="seg-btn" data-range="5m">5 мин</button>
+                <button type="button" class="seg-btn" data-range="30m">30 мин</button>
+                <button type="button" class="seg-btn is-active" data-range="all">Всё время</button>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-charts-pause">Пауза записи</button>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-export-csv">Экспорт CSV</button>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-clear-history">Очистить историю</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="fallback-banner" id="charts-fallback-banner" hidden>
+          Не удалось загрузить библиотеку Chart.js. Отображаются только числовые показатели статистики (проверьте доступ к интернету).
+        </div>
+
+        <div class="charts-grid" id="charts-grid"></div>
+      </section>
+
+      <!-- TAB 3: AI VISION DIAGNOSIS -->
+      <section class="tab-panel" id="tab-ai">
+        <div class="ai-layout">
+          <section class="panel ai-upload-panel">
+            <div class="panel-header">
+              <div>
+                <h1 class="panel-title">ИИ-диагностика растения по фото</h1>
+                <p class="panel-subtitle">Оценка здоровья, симптомов и корректировка ухода с учётом датчиков</p>
+              </div>
+            </div>
+
+            <div class="ai-form-group">
+              <label class="field">
+                <span>Выберите растение из базы теплицы</span>
+                <select id="ai-plant-select"></select>
+              </label>
+
+              <div class="ai-new-plant-box" id="ai-new-plant-inline" hidden>
+                <label class="field">
+                  <span>Название нового растения</span>
+                  <input type="text" id="ai-new-plant-name" placeholder="Например: Перец сладкий" maxlength="40" />
+                </label>
+                <label class="field">
+                  <span>Сорт / вид (необязательно)</span>
+                  <input type="text" id="ai-new-plant-species" placeholder="Capsicum annuum" maxlength="50" />
+                </label>
+              </div>
+            </div>
+
+            <div class="ai-dropzone" id="ai-dropzone" tabindex="0">
+              <input type="file" id="ai-file-input" accept="image/*" hidden />
+              <div class="ai-dropzone-empty" id="ai-dropzone-empty">
+                <div class="drop-icon">📷</div>
+                <div class="drop-title">Перетащите фото растения или нажмите для выбора</div>
+                <div class="drop-hint">Поддерживаются JPG, PNG, WEBP · фото с телефона или ПК</div>
+              </div>
+              <div class="ai-preview-wrap" id="ai-preview-wrap" hidden>
+                <img id="ai-preview-img" alt="Предпросмотр фото растения" />
+                <button type="button" class="btn btn-outline btn-sm preview-clear-btn" id="btn-ai-clear-photo">Удалить фото</button>
+              </div>
+            </div>
+
+            <div class="ai-engine-bar">
+              <span class="engine-pill" id="ai-engine-pill">Режим: Локальный демо-анализ</span>
+              <button type="button" class="link-btn" id="btn-ai-open-settings">Настроить Gemini API-ключ</button>
+            </div>
+
+            <div class="ai-telemetry-context" id="ai-telemetry-snapshot"></div>
+
+            <button type="button" class="btn btn-primary btn-lg ai-analyze-btn" id="btn-ai-analyze" disabled>
+              Анализировать состояние
+            </button>
+          </section>
+
+          <section class="panel ai-report-panel">
+            <div class="panel-header">
+              <div>
+                <h2 class="panel-title">Заключение ИИ-агронома</h2>
+                <p class="panel-subtitle">Результат автоматически обновляет карточку растения на главном экране</p>
+              </div>
+            </div>
+
+            <div class="ai-empty-state" id="ai-result-empty">
+              <div class="empty-icon">🌿</div>
+              <p>Загрузите фотографию растения слева и нажмите <strong>«Анализировать состояние»</strong>, чтобы получить оценку здоровья (0–100%) и рекомендации.</p>
+            </div>
+
+            <div class="ai-loading-state" id="ai-result-loading" hidden>
+              <div class="spinner"></div>
+              <p>Выполняется диагностика листа и сопоставление с микроклиматом теплицы…</p>
+            </div>
+
+            <div class="ai-result-card" id="ai-result-card" hidden>
+              <div class="ai-score-header">
+                <div class="ai-gauge-wrap">
+                  <svg class="ai-gauge-svg" viewBox="0 0 120 120">
+                    <circle class="gauge-track" cx="60" cy="60" r="50" />
+                    <circle class="gauge-progress" id="ai-gauge-arc" cx="60" cy="60" r="50" />
+                  </svg>
+                  <div class="ai-gauge-center">
+                    <span class="ai-gauge-num" id="ai-gauge-score">--%</span>
+                    <span class="ai-gauge-cap">здоровье</span>
+                  </div>
+                </div>
+
+                <div class="ai-score-meta">
+                  <div class="ai-meta-badges">
+                    <span class="status-pill" id="ai-result-status-pill">--</span>
+                    <span class="mono-tag" id="ai-result-engine-tag">--</span>
+                  </div>
+                  <div class="ai-species" id="ai-result-species"></div>
+                  <h3 class="ai-summary-title" id="ai-result-summary"></h3>
+                  <div class="saved-notice">✓ Данные сохранены в карточку растения на главном экране</div>
+                </div>
+              </div>
+
+              <div class="ai-section-block">
+                <h4>Подробный вывод</h4>
+                <p id="ai-result-diagnosis"></p>
+              </div>
+
+              <div class="ai-section-block">
+                <h4>Выявленные признаки</h4>
+                <div class="tags-row" id="ai-result-symptoms"></div>
+              </div>
+
+              <div class="ai-section-block">
+                <h4>Рекомендации для теплицы</h4>
+                <ul class="recs-list" id="ai-result-recommendations"></ul>
+              </div>
+            </div>
+
+            <div class="ai-history-block">
+              <h3>История проверок выбранного растения</h3>
+              <div class="ai-history-list" id="ai-history-list"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODAL: SETTINGS (MQTT + GEMINI API) -->
+  <div class="modal-backdrop" id="modal-settings" hidden>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+      <div class="modal-header">
+        <h2 id="settings-modal-title">Настройки подключения и ИИ</h2>
+        <button type="button" class="icon-btn" id="btn-close-settings" aria-label="Закрыть">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <h3>Источник телеметрии ESP32</h3>
+          <div class="radio-cards">
+            <label class="radio-card">
+              <input type="radio" name="data-source" value="sim" />
+              <div>
+                <strong>Симулятор теплицы</strong>
+                <span>Локальная физическая модель без подключения железа</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="data-source" value="mqtt" />
+              <div>
+                <strong>ESP32 через MQTT (WSS)</strong>
+                <span>Реальное время с контроллера через защищённый WebSocket</span>
+              </div>
+            </label>
+          </div>
+
+          <div class="mqtt-box" id="mqtt-config-box">
+            <div class="preset-row">
+              <span>Быстрый выбор брокера:</span>
+              <button type="button" class="btn btn-outline btn-xs" data-mqtt-preset="emqx">EMQX Public WSS</button>
+              <button type="button" class="btn btn-outline btn-xs" data-mqtt-preset="hivemq">HiveMQ Public WSS</button>
+            </div>
+            <div class="form-grid-2">
+              <label class="field">
+                <span>WSS URL брокера</span>
+                <input type="text" id="cfg-mqtt-broker" placeholder="wss://broker.emqx.io:8084/mqtt" />
+              </label>
+              <label class="field">
+                <span>Префикс топиков</span>
+                <input type="text" id="cfg-mqtt-prefix" placeholder="dolphilina/iot_greenhouse" />
+              </label>
+              <label class="field">
+                <span>Логин (опционально)</span>
+                <input type="text" id="cfg-mqtt-user" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Пароль (опционально)</span>
+                <input type="password" id="cfg-mqtt-pass" autocomplete="off" />
+              </label>
+            </div>
+            <div class="mqtt-actions-row">
+              <button type="button" class="btn btn-primary btn-sm" id="btn-mqtt-connect">Подключиться</button>
+              <button type="button" class="btn btn-outline btn-sm" id="btn-mqtt-disconnect">Отключиться</button>
+              <span class="mono-tag" id="cfg-mqtt-status-text">Статус: --</span>
+            </div>
+
+            <details class="protocol-details">
+              <summary>Протокол MQTT (JSON-топики для прошивки ESP32)</summary>
+              <div class="protocol-code">
+                <p><strong>1. ESP32 → Сайт</strong> (<code>&lt;prefix&gt;/telemetry</code>):</p>
+                <pre>{"airTemp":24.2,"airHumidity":61,"soilMoisture":44,"waterLevel":78,"lightLevel":65}</pre>
+                <p><strong>2. Сайт → ESP32</strong> (<code>&lt;prefix&gt;/control</code>, retain):</p>
+                <pre>{"mode":"auto","actuators":{"pump":false,"heater":false,"humidifier":false,"light":true,"fan":false}}</pre>
+                <p><strong>3. Статус ESP32</strong> (<code>&lt;prefix&gt;/status</code>): <code>online</code> / <code>offline</code></p>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>Google Gemini Vision API (диагностика по фото)</h3>
+          <p class="section-hint">
+            Ключ хранится <strong>только локально в вашем браузере</strong> (<code>localStorage</code>) и никогда не отправляется в репозиторий GitHub. Получить бесплатный ключ можно в <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>.
+          </p>
+          <div class="form-grid-2">
+            <label class="field">
+              <span>Gemini API Key</span>
+              <div class="input-with-btn">
+                <input type="password" id="cfg-gemini-key" placeholder="AIza..." autocomplete="off" />
+                <button type="button" class="btn btn-outline btn-xs" id="btn-toggle-key-vis">Показать</button>
+              </div>
+            </label>
+            <label class="field">
+              <span>Модель Gemini</span>
+              <select id="cfg-gemini-model">
+                <option value="gemini-2.5-flash">gemini-2.5-flash (рекомендуется)</option>
+                <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+                <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <button type="button" class="btn btn-outline btn-xs" id="btn-clear-gemini-key">Очистить ключ</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-primary" id="btn-save-settings">Сохранить настройки</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: PLANT ADD / EDIT / DETAILS -->
+  <div class="modal-backdrop" id="modal-plant" hidden>
+    <div class="modal-dialog modal-dialog--sm" role="dialog" aria-modal="true" aria-labelledby="modal-plant-title">
+      <div class="modal-header">
+        <h2 id="modal-plant-title">Карточка растения</h2>
+        <button type="button" class="icon-btn" id="btn-close-plant-modal" aria-label="Закрыть">✕</button>
+      </div>
+      <form id="plant-form">
+        <div class="modal-body">
+          <input type="hidden" id="pm-id" />
+          <div class="pm-preview-section" id="pm-scan-preview-section" hidden>
+            <div class="pm-visual-box" id="pm-svg-preview"></div>
+            <div class="pm-scan-summary">
+              <div class="pm-score-line" id="pm-score-line"></div>
+              <p id="pm-last-diagnosis"></p>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>Название растения *</span>
+            <input type="text" id="pm-name" required maxlength="40" placeholder="Например: Огурец Кураж" />
+          </label>
+          <label class="field">
+            <span>Вид / сорт</span>
+            <input type="text" id="pm-species" maxlength="50" placeholder="Cucumis sativus" />
+          </label>
+          <label class="field">
+            <span>Заметки</span>
+            <textarea id="pm-notes" rows="2" maxlength="160" placeholder="Грядка, дата посадки, особенности полива"></textarea>
+          </label>
+        </div>
+        <div class="modal-footer modal-footer--spread">
+          <div class="modal-footer-left">
+            <button type="button" class="btn btn-danger btn-sm" id="btn-delete-plant" hidden>Удалить</button>
+            <button type="button" class="btn btn-outline btn-sm" id="btn-go-ai-from-modal" hidden>Загрузить фото</button>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" id="btn-save-plant">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- TOASTS -->
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+</body>
+</html>
