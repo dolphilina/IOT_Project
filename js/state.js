@@ -177,19 +177,26 @@
     },
 
     addLog: function (level, text) {
-      this.logs.unshift({
+      var entry = {
         ts: Date.now(),
         level: level || 'info',
         text: text
-      });
+      };
+      this.logs.unshift(entry);
       if (this.logs.length > CFG.LOG_LIMIT) {
         this.logs.length = CFG.LOG_LIMIT;
+      }
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.pushLog(entry);
       }
       emit('logs', this.logs);
     },
 
     clearLogs: function () {
       this.logs = [];
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.clearLogs();
+      }
       emit('logs', this.logs);
     },
 
@@ -223,6 +230,9 @@
           this.history = this.history.slice(-CFG.HISTORY_LIMIT);
         }
         saveStorage(CFG.STORAGE_KEYS.HISTORY, this.history);
+        if (GH.Supabase && GH.Supabase.isReady()) {
+          GH.Supabase.pushTelemetry(this.telemetry, this.settings.source);
+        }
       }
 
       emit('telemetry', this.telemetry);
@@ -240,6 +250,9 @@
         }
       ];
       saveStorage(CFG.STORAGE_KEYS.HISTORY, this.history);
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.clearTelemetry();
+      }
       emit('historyCleared', this.history);
     },
 
@@ -254,6 +267,9 @@
           ? 'Режим управления переключён на АВТОМАТИЧЕСКИЙ'
           : 'Режим управления переключён на РУЧНОЙ'
       );
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.saveConfig(this);
+      }
       emit('mode', this.mode);
     },
 
@@ -271,6 +287,9 @@
           nextVal ? 'ok' : 'info',
           (meta ? meta.label : key) + ': ' + (nextVal ? 'ВКЛ' : 'ВЫКЛ')
         );
+      }
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.saveConfig(this);
       }
       emit('actuators', this.actuators);
       return true;
@@ -300,6 +319,9 @@
       }
       if (changed) {
         saveStorage(CFG.STORAGE_KEYS.ACTUATORS, this.actuators);
+        if (GH.Supabase && GH.Supabase.isReady()) {
+          GH.Supabase.saveConfig(this);
+        }
         emit('actuators', this.actuators);
       }
       return changed;
@@ -309,6 +331,9 @@
       this.thresholds = Object.assign({}, this.thresholds, nextThresholds);
       saveStorage(CFG.STORAGE_KEYS.THRESHOLDS, this.thresholds);
       this.addLog('info', 'Уставки автоматического режима обновлены');
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.saveConfig(this);
+      }
       emit('thresholds', this.thresholds);
     },
 
@@ -316,6 +341,9 @@
       this.thresholds = Object.assign({}, CFG.DEFAULT_THRESHOLDS);
       saveStorage(CFG.STORAGE_KEYS.THRESHOLDS, this.thresholds);
       this.addLog('info', 'Уставки автоматики сброшены к заводским значениям');
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.saveConfig(this);
+      }
       emit('thresholds', this.thresholds);
     },
 
@@ -374,6 +402,9 @@
       this.selectedPlantId = plant.id;
       this.addLog('ok', 'В базу теплицы добавлено растение: ' + plant.name);
       this.persistPlants();
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.savePlant(plant);
+      }
       return { plant: plant };
     },
 
@@ -384,6 +415,9 @@
       if (!plant) return null;
       Object.assign(plant, patch);
       this.persistPlants();
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.savePlant(plant);
+      }
       return plant;
     },
 
@@ -435,6 +469,9 @@
         'ИИ-диагностика «' + plant.name + '»: ' + score + '% (' + CFG.STATUS_META[status].label + ')'
       );
       this.persistPlants();
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.savePlantScan(plant, scanEntry);
+      }
       return plant;
     },
 
@@ -449,7 +486,64 @@
       }
       this.addLog('warn', 'Растение удалено из базы: ' + removed.name);
       this.persistPlants();
+      if (GH.Supabase && GH.Supabase.isReady()) {
+        GH.Supabase.deletePlant(id);
+      }
       return true;
+    },
+
+    hydrateFromRemote: function (data) {
+      if (!data || typeof data !== 'object') return;
+
+      if (Array.isArray(data.plants) && data.plants.length > 0) {
+        this.plants = data.plants.slice(0, CFG.MAX_PLANTS);
+        if (!this.plants.some(function (p) { return p.id === GH.State.selectedPlantId; })) {
+          this.selectedPlantId = this.plants[0] ? this.plants[0].id : '';
+        }
+        saveStorage(CFG.STORAGE_KEYS.PLANTS, this.plants);
+        emit('plants', this.plants);
+      }
+
+      if (data.config && typeof data.config === 'object') {
+        if (data.config.mode === 'manual' || data.config.mode === 'auto') {
+          this.mode = data.config.mode;
+          saveStorage(CFG.STORAGE_KEYS.MODE, this.mode);
+          emit('mode', this.mode);
+        }
+        if (data.config.actuators && typeof data.config.actuators === 'object') {
+          this.actuators = Object.assign({}, this.actuators, data.config.actuators);
+          saveStorage(CFG.STORAGE_KEYS.ACTUATORS, this.actuators);
+          emit('actuators', this.actuators);
+        }
+        if (data.config.thresholds && typeof data.config.thresholds === 'object') {
+          this.thresholds = Object.assign({}, CFG.DEFAULT_THRESHOLDS, data.config.thresholds);
+          saveStorage(CFG.STORAGE_KEYS.THRESHOLDS, this.thresholds);
+          emit('thresholds', this.thresholds);
+        }
+      }
+
+      if (Array.isArray(data.history) && data.history.length > 0) {
+        this.history = data.history.slice(-CFG.HISTORY_LIMIT);
+        saveStorage(CFG.STORAGE_KEYS.HISTORY, this.history);
+        var latest = this.history[this.history.length - 1];
+        if (latest) {
+          this.telemetry = {
+            airTemp: latest.airTemp,
+            airHumidity: latest.airHumidity,
+            soilMoisture: latest.soilMoisture,
+            waterLevel: latest.waterLevel,
+            lightLevel: latest.lightLevel,
+            lastUpdated: latest.ts || Date.now()
+          };
+          emit('telemetry', this.telemetry);
+        }
+        emit('historyCleared', this.history);
+      }
+
+      if (Array.isArray(data.logs) && data.logs.length > 0) {
+        this.logs = data.logs.slice(0, CFG.LOG_LIMIT);
+        emit('logs', this.logs);
+      }
     }
   };
 })();

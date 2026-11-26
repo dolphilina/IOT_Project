@@ -9,6 +9,12 @@
     LOG_LIMIT: 80,
     SIM_TICK_MS: 2000,
 
+    SUPABASE: {
+      url: 'https://fwhtpbxauebbsztlcoda.supabase.co',
+      publishableKey: 'sb_publishable_U9GdxfulKcC2oBgJZVSnrw_w87pRGBj',
+      telemetrySyncIntervalMs: 10000
+    },
+
     STORAGE_KEYS: {
       PLANTS: 'gh_scada_v1_plants',
       THRESHOLDS: 'gh_scada_v1_thresholds',

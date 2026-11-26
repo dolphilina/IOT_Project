@@ -1205,6 +1205,7 @@
     });
     GH.State.subscribe('mode', renderControlState);
     GH.State.subscribe('actuators', renderControlState);
+    GH.State.subscribe('thresholds', populateThresholdsForm);
     GH.State.subscribe('plants', function () {
       renderPlants();
       if (activeTab === 'ai') {
@@ -1216,6 +1217,10 @@
     GH.State.subscribe('connection', renderConnection);
 
     bindEvents();
+
+    if (GH.Supabase) {
+      GH.Supabase.init();
+    }
 
     if (GH.State.settings.source === 'mqtt') {
       GH.Mqtt.connect(GH.State.settings.mqtt);
