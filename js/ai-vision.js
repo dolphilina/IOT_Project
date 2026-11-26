@@ -217,8 +217,7 @@
     var endpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/' +
       encodeURIComponent(selectedModel) +
-      ':generateContent?key=' +
-      encodeURIComponent(cleanKey);
+      ':generateContent';
 
     var prompt =
       'Ты опытный агроном и фитопатолог умной IoT-теплицы. Проанализируй фотографию растения «' +
@@ -264,14 +263,17 @@
 
     return fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': cleanKey
+      },
       body: JSON.stringify(body)
     }).then(function (res) {
       return res.json().then(function (json) {
         if (!res.ok) {
           var msg = (json && json.error && json.error.message) || ('HTTP ' + res.status);
           if (res.status === 400 || res.status === 401 || res.status === 403) {
-            throw new Error('Ошибка авторизации Gemini API (' + res.status + '): проверьте API-ключ в настройках.');
+            throw new Error('Ошибка Gemini API (' + res.status + '): ' + msg);
           }
           if (res.status === 429) {
             throw new Error('Превышен лимит запросов Gemini API (429). Подождите немного и попробуйте снова.');
