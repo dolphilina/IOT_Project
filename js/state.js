@@ -73,6 +73,13 @@
     }
     if (savedSettings.gemini) {
       initialSettings.gemini = Object.assign({}, initialSettings.gemini, savedSettings.gemini);
+      if (
+        initialSettings.gemini.model === 'gemini-2.0-flash' ||
+        initialSettings.gemini.model === 'gemini-2.5-flash' ||
+        initialSettings.gemini.model === 'gemini-2.5-pro'
+      ) {
+        initialSettings.gemini.model = CFG.DEFAULT_SETTINGS.gemini.model;
+      }
     }
   }
 

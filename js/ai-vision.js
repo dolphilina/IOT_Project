@@ -213,7 +213,7 @@
 
   function analyzeWithGemini(base64Jpeg, apiKey, model, plantName, telemetry) {
     var cleanKey = String(apiKey || '').trim();
-    var selectedModel = String(model || 'gemini-2.5-flash').trim();
+    var selectedModel = String(model || 'gemini-3.8-flash').trim();
     var endpoint =
       'https://generativelanguage.googleapis.com/v1beta/models/' +
       encodeURIComponent(selectedModel) +
